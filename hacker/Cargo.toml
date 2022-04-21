@@ -1,0 +1,20 @@
+[package]
+name = "hacker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+color-eyre = "0.6.1"
+argh = "0.1.7"
+cstr = "0.2.10"
+
+[dependencies.windows]
+version = "0.35.0"
+features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+]
