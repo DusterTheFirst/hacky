@@ -1,6 +1,5 @@
 use std::{
-    ffi::{self, CString},
-    mem,
+    ffi::CString,
     path::Path,
     ptr,
 };
@@ -13,13 +12,12 @@ use windows::{
         Foundation::GetLastError,
         System::{
             Diagnostics::Debug::{
-                FormatMessageA, ReadProcessMemory, WriteProcessMemory,
+                FormatMessageA, WriteProcessMemory,
                 FORMAT_MESSAGE_ALLOCATE_BUFFER, FORMAT_MESSAGE_FROM_SYSTEM,
                 FORMAT_MESSAGE_IGNORE_INSERTS,
             },
-            LibraryLoader::{GetModuleHandleA, GetProcAddress},
+            LibraryLoader::{GetModuleHandleA, GetProcAddress, LoadLibraryA},
             Memory::{VirtualAllocEx, MEM_COMMIT, PAGE_READWRITE},
-            ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS},
             Threading::{
                 CreateRemoteThread, OpenProcess, QueryFullProcessImageNameA, PROCESS_CREATE_THREAD,
                 PROCESS_NAME_NATIVE, PROCESS_QUERY_INFORMATION, PROCESS_VM_OPERATION,
@@ -42,10 +40,24 @@ fn main() -> color_eyre::Result<()> {
 
     let Args { pid } = argh::from_env();
 
-    unsafe { do_crimes(pid) }
+    let path = Path::new("./target/debug/payload.dll").canonicalize()?;
+    println!("canonicalized DLL: {path:?}");
+    let path = CString::new(path.to_string_lossy().as_ref())?;
+
+    // unsafe { do_bad(path) }
+
+    unsafe { do_crimes(pid, path) }
 }
 
-unsafe fn do_crimes(pid: u32) -> color_eyre::Result<()> {
+unsafe fn do_bad(path: CString) -> color_eyre::Result<()> {
+    let path_bytes = path.as_bytes_with_nul();
+
+    LoadLibraryA(PCSTR(path_bytes.as_ptr()));
+
+    Ok(())
+}
+
+unsafe fn do_crimes(pid: u32, path: CString) -> color_eyre::Result<()> {
     let process = OpenProcess(
         PROCESS_CREATE_THREAD
             | PROCESS_QUERY_INFORMATION
@@ -73,11 +85,7 @@ unsafe fn do_crimes(pid: u32) -> color_eyre::Result<()> {
     let image_name = String::from_utf8_lossy(&image_name[..image_name_len as _]);
     println!("process name {image_name}");
 
-    let path = Path::new("./target/debug/payload.dll").canonicalize()?;
-    println!("canonicalized DLL: {path:?}");
-    let path = CString::new(path.to_string_lossy().as_ref())?;
-
-    let path_bytes = path.as_bytes();
+    let path_bytes = path.as_bytes_with_nul();
     let target_addr = VirtualAllocEx(
         process,
         ptr::null(),
@@ -113,55 +121,55 @@ unsafe fn do_crimes(pid: u32) -> color_eyre::Result<()> {
     let load_library_a = GetProcAddress(kernel32, PCSTR(b"LoadLibraryA\0".as_ptr()))
         .ok_or(eyre!("LoadLibraryA not found!"))? as *const ();
 
-    println!("Press enter to start thread...");
-    std::io::stdin().read_line(&mut String::new())?;
+    // println!("Press enter to start thread...");
+    // std::io::stdin().read_line(&mut String::new())?;
 
-    // let mut tid = 0;
-    // let thread = CreateRemoteThread(
-    //     process,
-    //     ptr::null(),
-    //     0,
-    //     Some(std::mem::transmute(load_library_a)),
-    //     target_addr,
-    //     0,
-    //     &mut tid,
-    // )?;
-    // println!("created thread {thread:?}, tid = {tid:?} in process {process:?} starting @ {load_library_a:p}");
+    let mut tid = 0;
+    let thread = CreateRemoteThread(
+        process,
+        ptr::null(),
+        0,
+        Some(std::mem::transmute(load_library_a)),
+        target_addr,
+        0,
+        &mut tid,
+    )?;
+    println!("created thread {thread:?}, tid = {tid:?} in process {process:?} starting @ {load_library_a:p}");
 
     // Read Memory
-    let mut memory_counters: PROCESS_MEMORY_COUNTERS = PROCESS_MEMORY_COUNTERS::default();
-    let success = K32GetProcessMemoryInfo(
-        process,
-        &mut memory_counters,
-        mem::size_of::<PROCESS_MEMORY_COUNTERS>() as _,
-    )
-    .as_bool();
-    if !success {
-        return Err(get_last_error().note("caused by K32GetProcessMemoryInfo"));
-    }
-    dbg!(memory_counters);
+    // let mut memory_counters: PROCESS_MEMORY_COUNTERS = PROCESS_MEMORY_COUNTERS::default();
+    // let success = K32GetProcessMemoryInfo(
+    //     process,
+    //     &mut memory_counters,
+    //     mem::size_of::<PROCESS_MEMORY_COUNTERS>() as _,
+    // )
+    // .as_bool();
+    // if !success {
+    //     return Err(get_last_error().note("caused by K32GetProcessMemoryInfo"));
+    // }
+    // dbg!(memory_counters);
 
-    const HEAP_START: *const ffi::c_void = 0x243_0000_0000_usize as _;
+    // const HEAP_START: *const ffi::c_void = 0x243_0000_0000_usize as _;
 
-    let mut offset = 0;
-    let mut mem = vec![0u8; memory_counters.WorkingSetSize];
+    // let mut offset = 0;
+    // let mut mem = vec![0u8; memory_counters.WorkingSetSize];
 
-    while offset < memory_counters.WorkingSetSize {
-        let mut bytes_read = 0;
-        let success = ReadProcessMemory(
-            process,
-            HEAP_START.add(offset),
-            mem[offset..].as_mut_ptr() as *mut _,
-            100,
-            &mut bytes_read,
-        )
-        .as_bool();
-        if success || bytes_read > 0 {
-            dbg!(&mem[offset..offset + 100]);
-        }
+    // while offset < memory_counters.WorkingSetSize {
+    //     let mut bytes_read = 0;
+    //     let success = ReadProcessMemory(
+    //         process,
+    //         HEAP_START.add(offset),
+    //         mem[offset..].as_mut_ptr() as *mut _,
+    //         100,
+    //         &mut bytes_read,
+    //     )
+    //     .as_bool();
+    //     if success || bytes_read > 0 {
+    //         dbg!(&mem[offset..offset + 100]);
+    //     }
 
-        offset += 100;
-    }
+    //     offset += 100;
+    // }
 
     Ok(())
 }
